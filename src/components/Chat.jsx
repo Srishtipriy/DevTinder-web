@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { createSocketConnection } from "../utils/socket";
 import { useSelector } from "react-redux";
@@ -11,6 +11,7 @@ const Chat = () => {
   const [newMessage, setNewMessage] = useState("");
   const user = useSelector((store) => store.user);
   const userId = user?._id;
+  const socketRef = useRef(null);
 
   const fetchChatMessages = async () => {
     const chat = await axios.get(BASE_URL + "/chat/" + targetUserId, {
@@ -34,38 +35,53 @@ const Chat = () => {
   }, []);
 
   useEffect(() => {
-    if (!userId) {
-      return;
-    }
-    const socket = createSocketConnection();
-    // As soon as the page loaded, the socket connection is made and joinChat event is emitted
+  if (!userId || !targetUserId) return;
+
+  const socket = createSocketConnection();
+  socketRef.current = socket;
+
+  socket.on("connect", () => {
+    console.log("Socket connected:", socket.id);
+
     socket.emit("joinChat", {
       firstName: user.firstName,
       userId,
       targetUserId,
     });
+  });
 
-    socket.on("messageReceived", ({ firstName, lastName, text }) => {
-      console.log(firstName + " :  " + text);
-      setMessages((messages) => [...messages, { firstName, lastName, text }]);
-    });
+  socket.on("connect_error", (error) => {
+    console.error("Socket connection failed:", error.message);
+  });
 
-    return () => {
-      socket.disconnect();
-    };
-  }, [userId, targetUserId]);
+  socket.on("messageReceived", ({ firstName, lastName, text }) => {
+    setMessages((previousMessages) => [
+      ...previousMessages,
+      { firstName, lastName, text },
+    ]);
+  });
 
-  const sendMessage = () => {
-    const socket = createSocketConnection();
-    socket.emit("sendMessage", {
-      firstName: user.firstName,
-      lastName: user.lastName,
-      userId,
-      targetUserId,
-      text: newMessage,
-    });
-    setNewMessage("");
+  return () => {
+    socket.disconnect();
+    socketRef.current = null;
   };
+}, [userId, targetUserId]);
+
+ const sendMessage = () => {
+  if (!newMessage.trim() || !socketRef.current?.connected) {
+    return;
+  }
+
+  socketRef.current.emit("sendMessage", {
+    firstName: user.firstName,
+    lastName: user.lastName,
+    userId,
+    targetUserId,
+    text: newMessage.trim(),
+  });
+
+  setNewMessage("");
+};
 
   return (
     <div className="w-3/4 mx-auto border border-gray-600 m-5 h-[70vh] flex flex-col">
